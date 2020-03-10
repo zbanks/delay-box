@@ -1,0 +1,3 @@
+build/
+binary.elf binary.hex
+generated.stm32f446ret6u.ld
