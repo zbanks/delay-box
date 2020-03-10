@@ -2,7 +2,8 @@ DEVICE          = stm32f446ret6u
 OPENCM3_DIR     = libopencm3
 OBJS            += $(patsubst %.c,%.o,$(wildcard src/*.c))
 
-CFLAGS          += -Os -ggdb3 -std=c11
+CFLAGS          += -O0 -ggdb3 -std=c11
+CFLAGS          += #-flto
 CFLAGS          += -Werror -Wall -Wextra -Wshadow -Wconversion
 CFLAGS          += -I.
 CPPFLAGS        += -MD
