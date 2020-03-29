@@ -12,6 +12,6 @@ void hal_led_set(bool on);
 void hal_sdcard_init(void);
 void hal_sdcard_speed(bool fast);
 uint8_t hal_sdcard_xfer(uint8_t tx_byte);
-void hal_sdcard_select(bool active);
+int hal_sdcard_select(bool active, uint32_t deadline_ms);
 void hal_sdcard_bulk_write(const void * buffer, size_t len);
 void hal_sdcard_bulk_read(void * buffer, size_t len);

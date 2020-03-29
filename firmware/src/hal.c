@@ -88,15 +88,21 @@ void hal_sdcard_speed(bool fast) {
 
 uint8_t hal_sdcard_xfer(uint8_t tx_byte) { return (uint8_t)spi_xfer(SPI1, tx_byte); }
 
-void hal_sdcard_select(bool active) {
+int hal_sdcard_select(bool active, uint32_t deadline_ms) {
     if (active) {
         gpio_clear(GPIOA, GPIO4);
-        while (hal_sdcard_xfer(0xFF) == 0)
-            ;
+        int rc = -1;
+        while (rc != 0 && hal_now_ms() < deadline_ms) {
+            if (hal_sdcard_xfer(0xFF) == 0) {
+                rc = 0;
+            }
+        }
+        return rc;
     } else {
         gpio_set(GPIOA, GPIO4);
         // Send 8 clocks after releasing card
         hal_sdcard_xfer(0xFF);
+        return 0;
     }
 }
 

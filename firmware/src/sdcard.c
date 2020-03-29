@@ -18,7 +18,10 @@ static int sdcard_command(uint8_t cmd, uint32_t arg) {
     // `arg` is sent in big-endian
     const uint8_t * arg8 = (const uint8_t *)&arg;
 
-    hal_sdcard_select(true);
+    if (hal_sdcard_select(true, hal_now_ms() + sdcard_timeout_ms) != 0) {
+        return -1;
+    }
+
     hal_sdcard_xfer(cmd | 0x40);
     hal_sdcard_xfer(arg8[3]);
     hal_sdcard_xfer(arg8[2]);
@@ -86,12 +89,14 @@ int sdcard_setup(void) {
         if (rc == 0) {
             break;
         }
-        DEBUG((uint32_t) rc);
+        DEBUG((uint32_t)rc);
         hal_delay_ms(20);
     }
 
 done:
-    hal_sdcard_select(false);
+    if (hal_sdcard_select(false, hal_now_ms() + sdcard_timeout_ms) != 0) {
+        return -1;
+    }
     return rc;
 }
 
@@ -139,7 +144,9 @@ int sdcard_write(uint32_t block_id, const void * buf, size_t len) {
     }
 
 done:
-    hal_sdcard_select(false);
+    if (hal_sdcard_select(false, hal_now_ms() + sdcard_timeout_ms) != 0) {
+        return -1;
+    }
     return rc;
 }
 
@@ -175,6 +182,8 @@ int sdcard_read(uint32_t block_id, void * buf, size_t len) {
     hal_sdcard_xfer(0xFF);
     hal_sdcard_xfer(0xFF);
 
-    hal_sdcard_select(false);
+    if (hal_sdcard_select(false, hal_now_ms() + sdcard_timeout_ms) != 0) {
+        return -1;
+    }
     return 0;
 }
