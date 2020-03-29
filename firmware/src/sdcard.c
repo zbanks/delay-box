@@ -24,7 +24,8 @@ static int sdcard_command(uint8_t cmd, uint32_t arg) {
     hal_sdcard_xfer(arg8[0]);
     hal_sdcard_xfer(crc);
 
-    while (true) { // TODO: timeout
+    // TODO: timeout
+    while (true) {
         uint8_t rc = hal_sdcard_xfer(0xFF);
         if ((rc & 0x80) == 0) {
             return rc;
@@ -55,6 +56,7 @@ int sdcard_setup(void) {
         goto done;
     }
 
+    // TODO: timeout
     for (size_t retries = 1000;; retries--) {
         if (retries == 0) {
             goto done;
@@ -73,13 +75,15 @@ int sdcard_setup(void) {
 
     hal_sdcard_speed(true);
 
-    while (DEBUG(sdcard_command(1, 0)) != 0) {
-        // TODO: timeout
+    // TODO: timeout
+    while (true) {
+        rc = sdcard_command(1, 0);
+        if (rc == 0) {
+            break;
+        }
+        DEBUG((uint32_t) rc);
         hal_delay_ms(20);
     }
-
-    // Success!
-    rc = 0;
 
 done:
     hal_sdcard_select(false);
@@ -87,6 +91,7 @@ done:
 }
 
 int sdcard_write(uint32_t block_id, const void * buf, size_t len) {
+    // In the future, this function may support multiples of 512
     if (len != 512) {
         DEBUG(len);
         return -1;
@@ -94,24 +99,41 @@ int sdcard_write(uint32_t block_id, const void * buf, size_t len) {
 
     DEBUG(sdcard_command(24, block_id));
 
-    while (hal_sdcard_xfer(0xFF) != 0xFF)
-        ;
+    // TODO: timeout
+    while (true) {
+        if (hal_sdcard_xfer(0xFF) == 0xFF) {
+            break;
+        }
+    }
+
     hal_sdcard_xfer(0xFE); // Start single write
     hal_sdcard_bulk_write(buf, len);
-    hal_sdcard_xfer(0xFF); // Dummy
-    hal_sdcard_xfer(0xFF); // Dummy
 
-    // TODO: What's the correct value here?
+    // TODO: Timeout
+    int rc = -1;
     while (true) {
-        uint8_t rc = hal_sdcard_xfer(0xFF);
-        DEBUG(rc);
+        uint8_t response = hal_sdcard_xfer(0xFF);
+        if (response == 0xFF) {
+            continue;
+        }
+
+        // 0x05: Data accepted
+        // 0x0B: Data rejected, CRC error
+        // 0x0D: Data rejected, write error
+        if ((response & 0x1F) == 0x05) {
+            rc = 0;
+        } else {
+            DEBUG(response);
+        }
         break;
     }
+
     hal_sdcard_select(false);
-    return 0;
+    return rc;
 }
 
 int sdcard_read(uint32_t block_id, void * buf, size_t len) {
+    // In the future, this function may support multiples of 512
     if (len != 512) {
         DEBUG(len);
         return -1;
@@ -131,8 +153,10 @@ int sdcard_read(uint32_t block_id, void * buf, size_t len) {
     }
 
     hal_sdcard_bulk_read(buf, len);
-    hal_sdcard_xfer(0xFF); // CRC?
-    hal_sdcard_xfer(0xFF); // CRC?
+
+    // Read 16-bit CRC (but throw it out)
+    hal_sdcard_xfer(0xFF);
+    hal_sdcard_xfer(0xFF);
 
     hal_sdcard_select(false);
     return 0;

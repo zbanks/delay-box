@@ -1,7 +1,7 @@
 #pragma once
 #include "prelude.h"
 
-#define DEBUG_ENTRIES_SIZE ((size_t)16)
+#define DEBUG_LOG_SIZE ((size_t)16)
 
 #define DEBUG(v)                                                                                                       \
     ({                                                                                                                 \

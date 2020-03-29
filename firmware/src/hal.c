@@ -54,6 +54,10 @@ void hal_led_set(bool on) {
 
 // SPI SD Card
 void hal_sdcard_init() {
+    // Configure the SD card to use SPI1 on GPIO PA5 PA6 PA7 (Alt Fn 5)
+    // PA5 CLK; PA6 MISO; PA7 MOSI
+    // PA4 is used as software CS
+
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_GPIOAEN);
     rcc_peripheral_enable_clock(&RCC_APB2ENR, RCC_APB2ENR_SPI1EN);
 
@@ -66,7 +70,7 @@ void hal_sdcard_init() {
 
     spi_disable(SPI1);
     spi_reset(SPI1);
-    spi_init_master(SPI1, SPI_CR1_BR_FPCLK_DIV_128, SPI_CR1_CPOL_CLK_TO_1_WHEN_IDLE, SPI_CR1_CPHA_CLK_TRANSITION_2,
+    spi_init_master(SPI1, SPI_CR1_BR_FPCLK_DIV_256, SPI_CR1_CPOL_CLK_TO_1_WHEN_IDLE, SPI_CR1_CPHA_CLK_TRANSITION_2,
                     SPI_CR1_DFF_8BIT, SPI_CR1_MSBFIRST);
     spi_enable_software_slave_management(SPI1);
     spi_set_nss_high(SPI1);
@@ -76,24 +80,15 @@ void hal_sdcard_init() {
 }
 
 void hal_sdcard_speed(bool fast) {
-    (void)fast;
-    // spi_set_baudrate_prescaler(SPI1, fast ? SPI_CR1_BR_FPCLK_DIV_32 : SPI_CR1_BR_FPCLK_DIV_128);
+    // CPU clock is 168MHz
+    // Slow SPI clock is 168MHz / 256 = 650 kHz
+    // Fast SPI clock is 168MHz / 8 = 21 MHz
+    spi_set_baudrate_prescaler(SPI1, fast ? SPI_CR1_BR_FPCLK_DIV_8 : SPI_CR1_BR_FPCLK_DIV_256);
 }
 
-uint8_t hal_sdcard_xfer(uint8_t tx_byte) {
-    while (SPI1_SR & SPI_SR_BSY)
-        ;
-    return (uint8_t)spi_xfer(SPI1, tx_byte);
-}
+uint8_t hal_sdcard_xfer(uint8_t tx_byte) { return (uint8_t)spi_xfer(SPI1, tx_byte); }
 
 void hal_sdcard_select(bool active) {
-    /*
-    if (active == !gpio_get(GPIOA, GPIO4)) {
-        // Already in the correct state
-        return;
-    }
-    */
-
     if (active) {
         gpio_clear(GPIOA, GPIO4);
         while (hal_sdcard_xfer(0xFF) == 0)
@@ -106,6 +101,7 @@ void hal_sdcard_select(bool active) {
 }
 
 void hal_sdcard_bulk_write(const void * buffer, size_t len) {
+    // This could be replaced with DMA (but should remain a blocking call)
     const uint8_t * buffer8 = buffer;
     while (len--) {
         hal_sdcard_xfer(*buffer8++);
@@ -113,6 +109,7 @@ void hal_sdcard_bulk_write(const void * buffer, size_t len) {
 }
 
 void hal_sdcard_bulk_read(void * buffer, size_t len) {
+    // This could be replaced with DMA (but should remain a blocking call)
     uint8_t * buffer8 = buffer;
     while (len--) {
         *buffer8++ = hal_sdcard_xfer(0xFF);

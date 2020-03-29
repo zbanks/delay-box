@@ -6,7 +6,7 @@ static struct debug_entry {
     const char * file;
     int line;
     uint32_t time_ms;
-} _debug_log[DEBUG_ENTRIES_SIZE];
+} _debug_log[DEBUG_LOG_SIZE];
 
 static size_t _debug_log_count = 0;
 
