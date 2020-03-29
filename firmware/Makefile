@@ -1,13 +1,11 @@
 DEVICE          = stm32f446ret6u
 OPENCM3_DIR     = libopencm3
 OBJS            += $(patsubst %.c,%.o,$(wildcard src/*.c))
-OBJS            += openfat/stm32/mmc.o
 
 CFLAGS          += -O0 -ggdb3 -std=c11
 CFLAGS          += #-flto
 CFLAGS          += -Werror -Wall -Wextra -Wshadow -Wconversion
 CFLAGS          += -Isrc/
-CFLAGS          += -Iopenfat/include -Iopenfat/stm32
 CPPFLAGS        += -MD
 LDFLAGS         += -static -nostartfiles
 LDLIBS          += -Wl,--start-group -lc -lgcc -lnosys -Wl,--end-group
@@ -20,7 +18,7 @@ include $(OPENCM3_DIR)/mk/gcc-config.mk
 all: binary.elf binary.hex
 
 clean:
-	$(Q)$(RM) -rf binary.* $(OBJS) generated*.ld
+	$(Q)$(RM) -rf binary.* $(OBJS) generated*.ld $(wildcard src/*.d)
 
 format:
 	clang-format -i src/*.c src/*.h

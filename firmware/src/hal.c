@@ -34,7 +34,7 @@ void sys_tick_handler() { clock_ms++; }
 uint32_t hal_now_ms() { return clock_ms; }
 
 void hal_delay_ms(uint32_t m) {
-    uint32_t end_time_ms = m + hal_now_ms();
+    uint32_t end_time_ms = hal_now_ms() + m + 1;
     while (hal_now_ms() < end_time_ms)
         ;
 }

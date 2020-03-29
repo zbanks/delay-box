@@ -46,7 +46,6 @@ int sdcard_setup(void) {
         goto done;
     }
 
-    // hal_delay_ms(50);
     if (DEBUG(sdcard_command(8, 0x1AA)) != 1) {
         goto done;
     }
@@ -89,30 +88,52 @@ done:
 
 int sdcard_write(uint32_t block_id, const void * buf, size_t len) {
     if (len != 512) {
-        // DEBUG(len);
+        DEBUG(len);
         return -1;
     }
 
+    DEBUG(sdcard_command(24, block_id));
+
     while (hal_sdcard_xfer(0xFF) != 0xFF)
         ;
-    EXPECT(sdcard_command(24, block_id) == 0);
-
     hal_sdcard_xfer(0xFE); // Start single write
     hal_sdcard_bulk_write(buf, len);
     hal_sdcard_xfer(0xFF); // Dummy
     hal_sdcard_xfer(0xFF); // Dummy
 
     // TODO: What's the correct value here?
-    uint8_t rc = hal_sdcard_xfer(0xFF);
-    DEBUG(rc);
+    while (true) {
+        uint8_t rc = hal_sdcard_xfer(0xFF);
+        DEBUG(rc);
+        break;
+    }
     hal_sdcard_select(false);
     return 0;
 }
 
 int sdcard_read(uint32_t block_id, void * buf, size_t len) {
-    (void)block_id;
-    (void)buf;
-    (void)len;
-    EXPECT(0);
-    return -1;
+    if (len != 512) {
+        DEBUG(len);
+        return -1;
+    }
+
+    DEBUG(sdcard_command(17, block_id));
+
+    while (true) {
+        uint8_t ready = hal_sdcard_xfer(0xFF);
+        if (ready == 0xFF) {
+            continue;
+        }
+        if (ready != 0xFE) {
+            return -1;
+        }
+        break;
+    }
+
+    hal_sdcard_bulk_read(buf, len);
+    hal_sdcard_xfer(0xFF); // CRC?
+    hal_sdcard_xfer(0xFF); // CRC?
+
+    hal_sdcard_select(false);
+    return 0;
 }
