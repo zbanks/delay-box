@@ -1,13 +1,24 @@
 #include "hal.h"
 
 #include <libopencm3/cm3/systick.h>
+#include <libopencm3/cm3/nvic.h>
+#include <libopencm3/stm32/adc.h>
+#include <libopencm3/stm32/dac.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/rcc.h>
+#include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/spi.h>
+
+#define MEMORY_BARRIER() __asm__ volatile ("": : :"memory")
 
 void hal_init() {
     rcc_clock_setup_pll(&rcc_hse_8mhz_3v3[RCC_CLOCK_3V3_168MHZ]);
-    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_GPIOAEN);
+    rcc_periph_clock_enable(RCC_SPI1);
+    rcc_periph_clock_enable(RCC_ADC1);
+    rcc_periph_clock_enable(RCC_TIM2);
+    rcc_periph_clock_enable(RCC_GPIOA);
+    rcc_periph_clock_enable(RCC_GPIOB);
+    rcc_periph_clock_enable(RCC_DAC);
 
     // Configure systick to 1kHz
     systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
@@ -24,6 +35,19 @@ void hal_init() {
 
     // SPI SD Card
     hal_sdcard_init();
+
+    // TIM2, a 44100Hz interrupt
+    gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_PULLUP, GPIO9);
+    gpio_set_output_options(GPIOB, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO9);
+
+    nvic_enable_irq(NVIC_TIM2_IRQ);
+    rcc_periph_reset_pulse(RST_TIM2);
+    timer_disable_preload(TIM2);
+    timer_continuous_mode(TIM2);
+    timer_set_period(TIM2, rcc_apb1_frequency / 44100);
+    //timer_set_period(TIM2, rcc_apb1_frequency / 8000);
+    timer_enable_counter(TIM2);
+    timer_enable_irq(TIM2, TIM_DIER_CC1IE);
 }
 
 // SysTick / timer
@@ -53,22 +77,96 @@ void hal_led_set(bool on) {
 }
 
 // ADC
-void hal_adc_begin(uint16_t * sample_buffer, size_t sample_count) {
-    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_DMA1EN);
-    (void)sample_buffer;
-    (void)sample_count;
+static uint16_t * adc_sample_buffer = NULL;
+static volatile size_t adc_sample_size = 0;
+static size_t adc_sample_count = 0;
+
+void hal_adc_begin(uint16_t * sample_buffer, size_t sample_size) {
+
+    gpio_mode_setup(GPIOB, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO0);
+
+    adc_power_off(ADC1);
+    //adc_set_clk_source(ADC1, ADC_CLKSOURCE_ADC);
+    //adc_calibrate(ADC1);
+    //adc_disable_external_trigger_regular(ADC1);
+    //adc_set_left_aligned(ADC1);
+    adc_set_continuous_conversion_mode(ADC1);
+    //adc_enable_temperature_sensor();
+    adc_set_sample_time_on_all_channels(ADC1, ADC_SMPR_SMP_144CYC);
+    uint8_t adc_channels[1] = {8};
+    adc_set_regular_sequence(ADC1, 1, adc_channels);
+    adc_set_resolution(ADC1, ADC_CR1_RES_12BIT);
+    //adc_disable_analog_watchdog(ADC1);
+    adc_power_on(ADC1);
+    adc_start_conversion_regular(ADC1);
+
+    adc_sample_buffer = sample_buffer;
+    adc_sample_size = sample_size;
+    adc_sample_count = 0;
+    MEMORY_BARRIER();
 }
 
-size_t hal_adc_count(void) { return 0; }
+
+size_t hal_adc_count(void) { return adc_sample_count; }
+
+static uint16_t * dac_sample_buffer = NULL;
+static volatile size_t dac_sample_size = 0;
+static size_t dac_sample_count = 0;
+void hal_dac_begin(uint16_t * sample_buffer, size_t sample_size) {
+    gpio_mode_setup(GPIOA, GPIO_MODE_ANALOG, GPIO_PUPD_NONE, GPIO4);
+    dac_disable(CHANNEL_1);
+    dac_enable(CHANNEL_1);
+    dac_set_trigger_source(DAC_CR_TSEL1_SW);
+    dac_load_data_buffer_single(0, LEFT12, CHANNEL_1);
+
+    dac_sample_buffer = sample_buffer;
+    dac_sample_size = sample_size;
+    dac_sample_count = 0;
+    MEMORY_BARRIER();
+}
+
+void tim2_isr(void) {
+    timer_clear_flag(TIM2, TIM_SR_CC1IF);
+    gpio_toggle(GPIOB, GPIO9);
+
+    if (dac_sample_buffer != NULL && dac_sample_size != 0) {
+        dac_software_trigger(CHANNEL_1);
+        MEMORY_BARRIER();
+        int v = dac_sample_buffer[dac_sample_count++ % dac_sample_size];
+
+#if 0
+        // A basic 1-pole LPF to remove DC bias before applying a constant gain
+        // With a denominator of 256, the time constant is 
+        static int avg_v = 0;
+        avg_v += (v - avg_v) / 256;
+        static const int gain = 1;
+        v = (v - avg_v) * gain + 2048;
+
+        // 12-bit saturation
+        if (v < 0) {
+            v = 0;
+        } else if (v > 4095) {
+            v = 4095;
+        }
+#endif
+
+        dac_load_data_buffer_single((uint16_t) v, LEFT12, CHANNEL_1);
+    }
+
+    if (adc_sample_buffer != NULL && adc_sample_size != 0) {
+        adc_sample_buffer[adc_sample_count++ % adc_sample_size] = (uint16_t) adc_read_regular(ADC1);
+        MEMORY_BARRIER();
+
+        adc_start_conversion_regular(ADC1);
+    }
+
+}
 
 // SPI SD Card
 void hal_sdcard_init() {
     // Configure the SD card to use SPI1 on GPIO PA5 PA6 PA7 (Alt Fn 5)
     // PA5 CLK; PA6 MISO; PA7 MOSI
     // PA9 is used as software CS
-
-    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_GPIOAEN);
-    rcc_peripheral_enable_clock(&RCC_APB2ENR, RCC_APB2ENR_SPI1EN);
 
     gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO9 | GPIO5 | GPIO6 | GPIO7);
     gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO9);
