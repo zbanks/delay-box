@@ -1,11 +1,13 @@
 DEVICE          = stm32f446ret6u
 OPENCM3_DIR     = libopencm3
 OBJS            += $(patsubst %.c,%.o,$(wildcard src/*.c))
+OBJS            += openfat/stm32/mmc.o
 
 CFLAGS          += -O0 -ggdb3 -std=c11
 CFLAGS          += #-flto
 CFLAGS          += -Werror -Wall -Wextra -Wshadow -Wconversion
-CFLAGS          += -I.
+CFLAGS          += -Isrc/
+CFLAGS          += -Iopenfat/include -Iopenfat/stm32
 CPPFLAGS        += -MD
 LDFLAGS         += -static -nostartfiles
 LDLIBS          += -Wl,--start-group -lc -lgcc -lnosys -Wl,--end-group
