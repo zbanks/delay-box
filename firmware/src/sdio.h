@@ -9,6 +9,16 @@ enum sdio_clock_div { SDIO_24MHZ = 0, SDIO_16MHZ, SDIO_12MHZ, SDIO_8MHZ, SDIO_4M
 #define SDIO_CARD_UHS2(c) (((c)->ocr & 0x40000000) != 0)
 #define SDIO_CARD_LVOK(c) (((c)->ocr & 0x01000000) != 0)
 
+#define SDIO_ESUCCESS 0
+#define SDIO_ECTIMEOUT -1
+#define SDIO_ECCRCFAIL -2
+#define SDIO_ENORESP -3
+#define SDIO_EDCRCFAIL -4
+#define SDIO_ERXOVERR -5
+#define SDIO_ETXUNDER -6
+#define SDIO_EBADCARD -7
+#define SDIO_EUNKNOWN -8
+
 struct sdio_card {
     uint32_t props;
     uint32_t ocr;

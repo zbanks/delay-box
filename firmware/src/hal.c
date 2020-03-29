@@ -11,6 +11,7 @@ void hal_init() {
     // Configure systick to 1kHz
     systick_set_clocksource(STK_CSR_CLKSOURCE_AHB);
     STK_CVR = 0;
+    //systick_set_reload(rcc_ahb_frequency / 1000 - 1);
     systick_set_reload(rcc_ahb_frequency / 1000 - 1);
     systick_interrupt_enable();
     systick_counter_enable();

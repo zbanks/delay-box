@@ -29,24 +29,34 @@ int main() {
             continue;
         }
 
-        uint8_t tbuf[512];
-        sdio_readblock(card, 0, tbuf);
+        //uint8_t tbuf[512];
+        //sdio_readblock(card, 0, tbuf);
 
         uint32_t write_pointer = 0;
-        bool led_on = false;
+        //bool led_on = false;
         while (true) {
             uint8_t buf[512];
-            uint32_t value = hal_now_ms();
-            //memset(buf, 0, sizeof(buf));
+            //uint32_t value = 100;
+            uint32_t value = write_pointer & ~511u; //hal_now_ms();
+            memset(buf, (uint8_t) write_pointer, sizeof(buf));
+            value = hal_now_ms();
+            memcpy(&buf[4], &value, sizeof(value));
+            //memset(buf, 0x15, sizeof(buf));
+            //buf[0] = 0;
+            //buf[0] = 0;
+            (void) value;
+            //memcpy(&buf[0], &value, sizeof(value));
+            /*
             for (size_t i = 0; i < 512; i += sizeof(value)) {
                 memcpy(&buf[i], &value, sizeof(value));
             }
+            */
 
             int rc = 1;
             int retries = 3;
             do {
                 rc = sdio_writeblock(card, write_pointer, buf);
-                //hal_delay_ms(20);
+                //hal_delay_ms(100);
                 if (rc <= 0 && rc >= -9) {
                     error_counts[-rc]++;
                 }
@@ -55,11 +65,12 @@ int main() {
                     retries = 3;
                     error_counts[9]++;
                 }
-            } while (rc != 0);
+            //} while (!(rc == SDIO_ESUCCESS || rc == SDIO_EDCRCFAIL));
+            } while (rc != SDIO_ESUCCESS);
 
             write_pointer++;
-            hal_led_set(led_on);
-            led_on = !led_on;
+            hal_led_set(write_pointer & 128);
+            //led_on = !led_on;
         }
     }
 }

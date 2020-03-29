@@ -22,6 +22,7 @@
 #include "hal.h"
 
 #include <libopencm3/cm3/nvic.h>
+#include <libopencm3/stm32/dma.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/sdio.h>
@@ -37,6 +38,10 @@
 #define SDIO_CSD1_RBLKLEN(x) sdio_bit_slice(x->csd, 128, 83, 80)
 #define SDIO_CSD1_CSIZE(x) sdio_bit_slice(x->csd, 128, 73, 62)
 #define SDIO_CSD2_CSIZE(x) sdio_bit_slice(x->csd, 128, 69, 48)
+
+/* our static data buffer we use for data movement commands */
+static uint32_t data_buf[1024];
+static int data_len;
 
 /*
  * Conveniently swaps the bytes in a long around
@@ -97,6 +102,7 @@ static int sdio_bus(int bits, enum sdio_clock_div freq) {
         return -2;
     }
     clkreg |= SDIO_CLKCR_CLKEN;
+    //clkreg |= SDIO_CLKCR_HWFC_EN;
     SDIO_CLKCR = clkreg;
     return 0;
 }
@@ -107,12 +113,9 @@ static int sdio_bus(int bits, enum sdio_clock_div freq) {
  * pin, at the moment it uses the one used by the Embest board.
  */
 void sdio_init(void) {
-    /* Enable clocks for SDIO and DMA2 */
+    // Enable clocks for SDIO
     rcc_peripheral_enable_clock(&RCC_APB2ENR, RCC_APB2ENR_SDIOEN);
 
-#ifdef WITH_DMA2
-    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_DMA2EN);
-#endif
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_GPIOCEN);
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_GPIODEN);
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_CRCEN);
@@ -139,6 +142,40 @@ void sdio_init(void) {
     gpio_set_output_options(GPIOD, GPIO_OTYPE_PP, GPIO_OSPEED_25MHZ, GPIO2);
     gpio_mode_setup(GPIOD, GPIO_MODE_AF, GPIO_PUPD_PULLUP, GPIO2);
     gpio_set_af(GPIOD, GPIO_AF12, GPIO2);
+
+    // DMA2 setup
+    // a) Enable DMA2 controller and clear any pending interrupts.
+    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_DMA2EN);
+    nvic_enable_irq(NVIC_DMA2_STREAM3_IRQ);
+    dma_stream_reset(DMA2, DMA_STREAM3);
+    dma_disable_stream(DMA2, DMA_STREAM3);
+    dma_set_priority(DMA2, DMA_STREAM3, DMA_SxCR_PL_VERY_HIGH);
+
+    // b) Program the DMA2_Stream3 (or DMA2_Stream6) Channel4 source address register with the memory location base address and DMA2_Stream3 (or DMA2_Stream6) Channel4 destination address register with the SDIO_FIFO register address.
+    dma_channel_select(DMA2, DMA_STREAM3, DMA_SxCR_CHSEL_4);
+    dma_set_peripheral_address(DMA2, DMA_STREAM3, (uint32_t) &SDIO_FIFO);
+    dma_set_memory_address(DMA2, DMA_STREAM3, (uint32_t) &data_buf[0]);
+
+    // c) Program DMA2_Stream3 (or DMA2_Stream6) Channel4 control register (memory increment, not peripheral increment, peripheral and source width is word size).
+    dma_enable_memory_increment_mode(DMA2, DMA_STREAM3);
+    dma_disable_peripheral_increment_mode(DMA2, DMA_STREAM3);
+    dma_set_memory_size(DMA2, DMA_STREAM3, DMA_SxCR_MSIZE_32BIT);
+    dma_set_peripheral_size(DMA2, DMA_STREAM3, DMA_SxCR_PSIZE_32BIT);
+
+    // d) Program DMA2_Stream3 (or DMA2_Stream6) Channel4 to select the peripheral as flow controller (set PFCTRL bit in DMA_S3CR (or DMA_S6CR) configuration register).
+    dma_enable_fifo_mode(DMA2, DMA_STREAM3);
+    dma_set_fifo_threshold(DMA2, DMA_STREAM3, DMA_SxFCR_FTH_4_4_FULL);
+    dma_set_peripheral_flow_control(DMA2, DMA_STREAM3);
+
+    // e) Configure the incremental burst transfer to 4 beats (at least from peripheral side) in DMA2_Stream3 (or DMA2_Stream6) Channel4.
+    dma_set_peripheral_burst(DMA2, DMA_STREAM3, DMA_SxCR_PBURST_INCR4);
+    dma_set_memory_burst(DMA2, DMA_STREAM3, DMA_SxCR_MBURST_INCR4);
+
+    // f) Enable DMA2_Stream3 (or DMA2_Stream6) Channel4
+    //dma_disable_circular_mode(DMA2, DMA_STREAM3);
+
+
+
 }
 
 /*
@@ -180,15 +217,6 @@ static const char *__sdio_error_msgs[] = {
 };
 */
 
-#define SDIO_ESUCCESS 0
-#define SDIO_ECTIMEOUT -1
-#define SDIO_ECCRCFAIL -2
-#define SDIO_ENORESP -3
-#define SDIO_EDCRCFAIL -4
-#define SDIO_ERXOVERR -5
-#define SDIO_ETXUNDER -6
-#define SDIO_EBADCARD -7
-#define SDIO_EUNKNOWN -8
 
 /*
  * sdio_bit_slice - helper function
@@ -279,6 +307,9 @@ static int sdio_command(uint32_t cmd, uint32_t arg) {
     tmp_val = 0;
     do {
         tmp_val |= (SDIO_STA & 0x7ff);
+        if (tmp_val & (SDIO_STA_CTIMEOUT | SDIO_STA_CCRCFAIL)) {
+            break;
+        }
     } while ((SDIO_STA & SDIO_STA_CMDACT) || (!tmp_val));
     ;
     SDIO_ICR = tmp_val;
@@ -308,10 +339,6 @@ static int sdio_command(uint32_t cmd, uint32_t arg) {
 #endif
     return error;
 }
-
-/* our static data buffer we use for data movement commands */
-static uint32_t data_buf[129];
-static int data_len;
 
 /*
  * Helper function - sdio_select
@@ -426,8 +453,8 @@ int sdio_readblock(struct sdio_card * c, uint32_t lba, uint8_t * buf) {
                 do {
                     tmp_reg = SDIO_STA;
                     if (tmp_reg & SDIO_STA_RXDAVL) {
-                        data_buf[data_len] = SDIO_FIFO;
                         if (data_len < 128) {
+                            data_buf[data_len] = SDIO_FIFO;
                             ++data_len;
                         }
                     }
@@ -472,8 +499,8 @@ int sdio_writeblock(struct sdio_card * c, uint32_t lba, uint8_t * buf) {
     int err;
     uint32_t tmp_reg;
     uint32_t addr = lba;
-    uint8_t * t;
-    int ndx;
+    //uint8_t * t;
+    //int ndx;
 
     if (!SDIO_CARD_CCS(c)) {
         addr = lba * 512; // non HC cards use byte address
@@ -485,32 +512,54 @@ int sdio_writeblock(struct sdio_card * c, uint32_t lba, uint8_t * buf) {
      * uint32_t * but that can cause issues if it isn't
      * aligned.
      */
+    /*
     t = (uint8_t *)(data_buf);
     for (ndx = 0; ndx < 512; ndx++) {
         *t = *buf;
         buf++;
         t++;
     }
+    */
+    memcpy(data_buf, buf, 512);
     err = sdio_select(c->rca);
     if (!err) {
         /* Set Block Size to 512 */
         err = sdio_command(16, 512);
         if (!err) {
-            SDIO_DTIMER = 0xffffffff;
-            SDIO_DLEN = 512;
-            SDIO_DCTRL = SDIO_DCTRL_DBLOCKSIZE_9 | SDIO_DCTRL_DTEN;
             err = sdio_command(24, addr);
             if (!err) {
+
+                dma_clear_interrupt_flags(DMA2, DMA_STREAM3, (uint32_t) -1);
+                dma_set_transfer_mode(DMA2, DMA_STREAM3, DMA_SxCR_DIR_MEM_TO_PERIPHERAL);
+                //dma_set_number_of_data(DMA2, DMA_STREAM3, 512 / 4 + 4);
+                dma_set_number_of_data(DMA2, DMA_STREAM3, 0);
+                dma_enable_stream(DMA2, DMA_STREAM3);
+
+                SDIO_DTIMER = 0xffffffff;
+                SDIO_DLEN = 512;
+                SDIO_DCTRL = SDIO_DCTRL_DBLOCKSIZE_9 | SDIO_DCTRL_DTEN | SDIO_DCTRL_DMAEN;
                 data_len = 0;
+
                 do {
                     tmp_reg = SDIO_STA;
+                    /*
                     if (tmp_reg & SDIO_STA_TXFIFOHE) {
-                        SDIO_FIFO = data_buf[data_len];
                         if (data_len < 128) {
-                            ++data_len;
+                            SDIO_FIFO = data_buf[data_len++];
+                            SDIO_FIFO = data_buf[data_len++];
+                            SDIO_FIFO = data_buf[data_len++];
+                            SDIO_FIFO = data_buf[data_len++];
+                            SDIO_FIFO = data_buf[data_len++];
+                            SDIO_FIFO = data_buf[data_len++];
+                            SDIO_FIFO = data_buf[data_len++];
+                            SDIO_FIFO = data_buf[data_len++];
+                        } else {
+                            //SDIO_FIFO = 0x12345678;
                         }
                     }
+                    */
                 } while (tmp_reg & SDIO_STA_TXACT);
+
                 if ((tmp_reg & SDIO_STA_DBCKEND) == 0) {
                     if (tmp_reg & SDIO_STA_DCRCFAIL) {
                         err = SDIO_EDCRCFAIL;
@@ -520,6 +569,13 @@ int sdio_writeblock(struct sdio_card * c, uint32_t lba, uint8_t * buf) {
                         err = SDIO_EUNKNOWN; // Unknown Error!
                     }
                 }
+                // drain the FIFO
+                SDIO_FIFOCNT = 0;
+                volatile uint32_t x = 0;
+                for (size_t i = 0; i < 32; i++) {
+                    x += SDIO_FIFO;
+                }
+                (void) x;
             }
         }
     }
@@ -719,5 +775,6 @@ struct sdio_card * sdio_open(void) {
     }
 
     sdio_bus(4, SDIO_24MHZ);
+    sdio_bus(4, SDIO_400KHZ);
     return (err == 0) ? res : NULL;
 }
