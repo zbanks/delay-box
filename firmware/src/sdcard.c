@@ -2,6 +2,8 @@
 #include "debug.h"
 #include "hal.h"
 
+static const uint32_t sdcard_timeout_ms = 250 + 1;
+
 static int sdcard_command(uint8_t cmd, uint32_t arg) {
     // CRC is only required for CMD0 & CMD8; use hard-coded CRC values for those
     uint8_t crc = 0x55;
@@ -24,13 +26,15 @@ static int sdcard_command(uint8_t cmd, uint32_t arg) {
     hal_sdcard_xfer(arg8[0]);
     hal_sdcard_xfer(crc);
 
-    // TODO: timeout
-    while (true) {
+    uint32_t deadline_ms = hal_now_ms() + sdcard_timeout_ms;
+    while (hal_now_ms() < deadline_ms) {
         uint8_t rc = hal_sdcard_xfer(0xFF);
         if ((rc & 0x80) == 0) {
             return rc;
         }
     }
+
+    return -1;
 }
 
 int sdcard_setup(void) {
@@ -56,27 +60,28 @@ int sdcard_setup(void) {
         goto done;
     }
 
-    // TODO: timeout
-    for (size_t retries = 1000;; retries--) {
-        if (retries == 0) {
-            goto done;
-        }
-
+    uint32_t deadline_ms = hal_now_ms() + sdcard_timeout_ms;
+    while (hal_now_ms() < deadline_ms) {
         if (DEBUG(sdcard_command(55, 0)) != 1) {
             goto done;
         }
 
         if (DEBUG(sdcard_command(41, 0x40000000)) == 0) {
+            rc = 0;
             break;
         }
 
         hal_delay_ms(20);
     }
+    if (rc != 0) {
+        goto done;
+    }
 
     hal_sdcard_speed(true);
 
-    // TODO: timeout
-    while (true) {
+    rc = -1;
+    deadline_ms = hal_now_ms() + sdcard_timeout_ms;
+    while (hal_now_ms() < deadline_ms) {
         rc = sdcard_command(1, 0);
         if (rc == 0) {
             break;
@@ -99,19 +104,24 @@ int sdcard_write(uint32_t block_id, const void * buf, size_t len) {
 
     DEBUG(sdcard_command(24, block_id));
 
-    // TODO: timeout
-    while (true) {
+    int rc = -1;
+    uint32_t deadline_ms = hal_now_ms() + sdcard_timeout_ms;
+    while (hal_now_ms() < deadline_ms) {
         if (hal_sdcard_xfer(0xFF) == 0xFF) {
+            rc = 0;
             break;
         }
+    }
+    if (rc != 0) {
+        goto done;
     }
 
     hal_sdcard_xfer(0xFE); // Start single write
     hal_sdcard_bulk_write(buf, len);
 
-    // TODO: Timeout
-    int rc = -1;
-    while (true) {
+    rc = -1;
+    deadline_ms = hal_now_ms() + sdcard_timeout_ms;
+    while (hal_now_ms() < deadline_ms) {
         uint8_t response = hal_sdcard_xfer(0xFF);
         if (response == 0xFF) {
             continue;
@@ -128,6 +138,7 @@ int sdcard_write(uint32_t block_id, const void * buf, size_t len) {
         break;
     }
 
+done:
     hal_sdcard_select(false);
     return rc;
 }
@@ -141,15 +152,21 @@ int sdcard_read(uint32_t block_id, void * buf, size_t len) {
 
     DEBUG(sdcard_command(17, block_id));
 
-    while (true) {
+    int rc = -1;
+    uint32_t deadline_ms = hal_now_ms() + sdcard_timeout_ms;
+    while (rc != 0 && hal_now_ms() < deadline_ms) {
         uint8_t ready = hal_sdcard_xfer(0xFF);
         if (ready == 0xFF) {
             continue;
         }
-        if (ready != 0xFE) {
+        if (ready == 0xFE) {
+            rc = 0;
+        } else {
             return -1;
         }
-        break;
+    }
+    if (rc != 0) {
+        return -1;
     }
 
     hal_sdcard_bulk_read(buf, len);
