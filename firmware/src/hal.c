@@ -52,21 +52,30 @@ void hal_led_set(bool on) {
     */
 }
 
+// ADC
+void hal_adc_begin(uint16_t * sample_buffer, size_t sample_count) {
+    rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_DMA1EN);
+    (void)sample_buffer;
+    (void)sample_count;
+}
+
+size_t hal_adc_count(void) { return 0; }
+
 // SPI SD Card
 void hal_sdcard_init() {
     // Configure the SD card to use SPI1 on GPIO PA5 PA6 PA7 (Alt Fn 5)
     // PA5 CLK; PA6 MISO; PA7 MOSI
-    // PA4 is used as software CS
+    // PA9 is used as software CS
 
     rcc_peripheral_enable_clock(&RCC_AHB1ENR, RCC_AHB1ENR_GPIOAEN);
     rcc_peripheral_enable_clock(&RCC_APB2ENR, RCC_APB2ENR_SPI1EN);
 
-    gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO4 | GPIO5 | GPIO6 | GPIO7);
-    gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO4);
+    gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_50MHZ, GPIO9 | GPIO5 | GPIO6 | GPIO7);
+    gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO9);
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_PULLUP, GPIO5);
     gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_PULLUP, GPIO6 | GPIO7);
     gpio_set_af(GPIOA, GPIO_AF5, GPIO5 | GPIO6 | GPIO7);
-    gpio_set(GPIOA, GPIO4);
+    gpio_set(GPIOA, GPIO9);
 
     spi_disable(SPI1);
     spi_reset(SPI1);
@@ -90,16 +99,16 @@ uint8_t hal_sdcard_xfer(uint8_t tx_byte) { return (uint8_t)spi_xfer(SPI1, tx_byt
 
 int hal_sdcard_select(bool active, uint32_t deadline_ms) {
     if (active) {
-        gpio_clear(GPIOA, GPIO4);
+        gpio_clear(GPIOA, GPIO9);
         int rc = -1;
         while (rc != 0 && hal_now_ms() < deadline_ms) {
-            if (hal_sdcard_xfer(0xFF) == 0) {
+            if (hal_sdcard_xfer(0xFF) != 0) {
                 rc = 0;
             }
         }
         return rc;
     } else {
-        gpio_set(GPIOA, GPIO4);
+        gpio_set(GPIOA, GPIO9);
         // Send 8 clocks after releasing card
         hal_sdcard_xfer(0xFF);
         return 0;
