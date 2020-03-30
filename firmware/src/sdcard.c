@@ -107,7 +107,7 @@ int sdcard_write(uint32_t block_id, const void * buf, size_t len) {
         return -1;
     }
 
-    DEBUG(sdcard_command(24, block_id));
+    sdcard_command(24, block_id);
 
     int rc = -1;
     uint32_t deadline_ms = hal_now_ms() + sdcard_timeout_ms;
@@ -157,7 +157,7 @@ int sdcard_read(uint32_t block_id, void * buf, size_t len) {
         return -1;
     }
 
-    DEBUG(sdcard_command(17, block_id));
+    sdcard_command(17, block_id);
 
     int rc = -1;
     uint32_t deadline_ms = hal_now_ms() + sdcard_timeout_ms;

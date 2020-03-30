@@ -18,6 +18,7 @@ void hal_init() {
     rcc_periph_clock_enable(RCC_TIM2);
     rcc_periph_clock_enable(RCC_GPIOA);
     rcc_periph_clock_enable(RCC_GPIOB);
+    rcc_periph_clock_enable(RCC_GPIOC);
     rcc_periph_clock_enable(RCC_DAC);
 
     // Configure systick to 1kHz
@@ -32,6 +33,9 @@ void hal_init() {
     gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO5);
     gpio_set_output_options(GPIOA, GPIO_OTYPE_PP, GPIO_OSPEED_25MHZ, GPIO5);
     hal_led_set(false);
+
+    // Blue USER button, has both pullup/pulldown & 100nF cap
+    gpio_mode_setup(GPIOC, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO13);
 
     // SPI SD Card
     hal_sdcard_init();
@@ -76,8 +80,24 @@ void hal_led_set(bool on) {
     */
 }
 
+// Button
+bool hal_button_get() {
+    return !gpio_get(GPIOC, GPIO13);
+}
+
+bool hal_button_pushed() {
+    static bool state = false;
+    bool new_state = hal_button_get();
+    if (new_state && !state) {
+        state = new_state;
+        return true;
+    }
+    state = new_state;
+    return false;
+}
+
 // ADC
-static uint16_t * adc_sample_buffer = NULL;
+static uint16_t * volatile adc_sample_buffer = NULL;
 static volatile size_t adc_sample_size = 0;
 static size_t adc_sample_count = 0;
 
@@ -107,7 +127,10 @@ void hal_adc_begin(uint16_t * sample_buffer, size_t sample_size) {
 }
 
 
-size_t hal_adc_count(void) { return adc_sample_count; }
+size_t hal_adc_count(void) { 
+    MEMORY_BARRIER();
+    return adc_sample_count; 
+}
 
 static uint16_t * dac_sample_buffer = NULL;
 static volatile size_t dac_sample_size = 0;
@@ -123,6 +146,11 @@ void hal_dac_begin(uint16_t * sample_buffer, size_t sample_size) {
     dac_sample_size = sample_size;
     dac_sample_count = 0;
     MEMORY_BARRIER();
+}
+
+size_t hal_dac_count() {
+    MEMORY_BARRIER();
+    return dac_sample_count;
 }
 
 void tim2_isr(void) {
